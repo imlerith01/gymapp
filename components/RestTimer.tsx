@@ -7,10 +7,23 @@ import {
   Modal,
   Animated,
   AppState,
+  Platform,
 } from 'react-native';
 import { Audio } from 'expo-av';
+import * as Notifications from 'expo-notifications';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { COLORS, FONTS } from '../constants/theme';
+
+// Show notification as alert even when app is in foreground
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true,
+  }),
+});
 
 type Props = {
   seconds: number;
@@ -18,36 +31,56 @@ type Props = {
   onSkip: () => void;
 };
 
+async function ensureNotificationPermissions() {
+  const { status } = await Notifications.getPermissionsAsync();
+  if (status !== 'granted') {
+    await Notifications.requestPermissionsAsync();
+  }
+
+  // Android: create a high-priority channel for timer alerts
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('rest-timer', {
+      name: 'Rest Timer',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default',
+      vibrationPattern: [0, 400, 200, 400],
+      enableVibrate: true,
+    });
+  }
+}
+
 export default function RestTimer({ seconds, onComplete, onSkip }: Props) {
   const [remaining, setRemaining] = useState(seconds);
   const progress = useRef(new Animated.Value(1)).current;
   const endTimeRef = useRef(Date.now() + seconds * 1000);
   const completedRef = useRef(false);
+  const notificationIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     activateKeepAwakeAsync('rest-timer');
     endTimeRef.current = Date.now() + seconds * 1000;
 
-    // Recalculate remaining time based on absolute end time
+    // Schedule a notification for when the timer ends (works in background)
+    scheduleTimerNotification(seconds);
+
     function tick() {
       const now = Date.now();
       const left = Math.max(0, Math.ceil((endTimeRef.current - now) / 1000));
       setRemaining(left);
 
-      // Update animated progress to match real time
       const fraction = left / seconds;
       progress.setValue(fraction);
 
       if (left <= 0 && !completedRef.current) {
         completedRef.current = true;
         clearInterval(interval);
+        // Play in-app beep as well (if app is in foreground)
         playBeep().then(onComplete);
       }
     }
 
     const interval = setInterval(tick, 250);
 
-    // When app returns from background, tick immediately recalculates from endTimeRef
     const subscription = AppState.addEventListener('change', (state) => {
       if (state === 'active') tick();
     });
@@ -55,9 +88,41 @@ export default function RestTimer({ seconds, onComplete, onSkip }: Props) {
     return () => {
       clearInterval(interval);
       subscription.remove();
+      cancelTimerNotification();
       deactivateKeepAwake('rest-timer');
     };
   }, []);
+
+  async function scheduleTimerNotification(secs: number) {
+    try {
+      await ensureNotificationPermissions();
+      notificationIdRef.current = await Notifications.scheduleNotificationAsync({
+        content: {
+          title: '⏱️ Pauza skončila!',
+          body: 'Čas na další sérii',
+          sound: 'default',
+          ...(Platform.OS === 'android' ? { channelId: 'rest-timer' } : {}),
+        },
+        trigger: {
+          type: Notifications.SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds: secs,
+        },
+      });
+    } catch {
+      // Notifications not available (e.g. web)
+    }
+  }
+
+  async function cancelTimerNotification() {
+    try {
+      if (notificationIdRef.current) {
+        await Notifications.cancelScheduledNotificationAsync(notificationIdRef.current);
+        notificationIdRef.current = null;
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   async function playBeep() {
     try {
@@ -73,6 +138,11 @@ export default function RestTimer({ seconds, onComplete, onSkip }: Props) {
     } catch {
       // No beep file available
     }
+  }
+
+  function handleSkip() {
+    cancelTimerNotification();
+    onSkip();
   }
 
   const mins = Math.floor(remaining / 60);
@@ -132,7 +202,7 @@ export default function RestTimer({ seconds, onComplete, onSkip }: Props) {
           </View>
         </View>
 
-        <TouchableOpacity style={styles.skipButton} onPress={onSkip}>
+        <TouchableOpacity style={styles.skipButton} onPress={handleSkip}>
           <Text style={styles.skipText}>Přeskočit</Text>
         </TouchableOpacity>
       </View>
