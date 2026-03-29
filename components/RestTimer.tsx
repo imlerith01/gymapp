@@ -34,17 +34,26 @@ type Props = {
 async function ensureNotificationPermissions() {
   const { status } = await Notifications.getPermissionsAsync();
   if (status !== 'granted') {
-    await Notifications.requestPermissionsAsync();
+    const { status: newStatus } = await Notifications.requestPermissionsAsync({
+      android: {
+        allowAlert: true,
+        allowSound: true,
+        allowVibrate: true,
+      },
+    });
+    if (newStatus !== 'granted') return;
   }
 
-  // Android: create a high-priority channel for timer alerts
+  // Android: create a MAX-priority channel for timer alerts
   if (Platform.OS === 'android') {
     await Notifications.setNotificationChannelAsync('rest-timer', {
       name: 'Rest Timer',
-      importance: Notifications.AndroidImportance.HIGH,
-      sound: 'default',
+      importance: Notifications.AndroidImportance.MAX,
+      sound: 'beep.mp3',
       vibrationPattern: [0, 400, 200, 400],
       enableVibrate: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      bypassDnd: true,
     });
   }
 }
@@ -100,7 +109,8 @@ export default function RestTimer({ seconds, onComplete, onSkip }: Props) {
         content: {
           title: '⏱️ Pauza skončila!',
           body: 'Čas na další sérii',
-          sound: 'default',
+          sound: Platform.OS === 'android' ? 'beep.mp3' : 'default',
+          priority: Notifications.AndroidNotificationPriority.MAX,
           ...(Platform.OS === 'android' ? { channelId: 'rest-timer' } : {}),
         },
         trigger: {
