@@ -6,6 +6,7 @@ import {
   StyleSheet,
   Modal,
   Animated,
+  AppState,
 } from 'react-native';
 import { Audio } from 'expo-av';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
@@ -20,29 +21,40 @@ type Props = {
 export default function RestTimer({ seconds, onComplete, onSkip }: Props) {
   const [remaining, setRemaining] = useState(seconds);
   const progress = useRef(new Animated.Value(1)).current;
+  const endTimeRef = useRef(Date.now() + seconds * 1000);
+  const completedRef = useRef(false);
 
   useEffect(() => {
     activateKeepAwakeAsync('rest-timer');
+    endTimeRef.current = Date.now() + seconds * 1000;
 
-    Animated.timing(progress, {
-      toValue: 0,
-      duration: seconds * 1000,
-      useNativeDriver: false,
-    }).start();
+    // Recalculate remaining time based on absolute end time
+    function tick() {
+      const now = Date.now();
+      const left = Math.max(0, Math.ceil((endTimeRef.current - now) / 1000));
+      setRemaining(left);
 
-    const interval = setInterval(() => {
-      setRemaining((prev) => {
-        if (prev <= 1) {
-          clearInterval(interval);
-          playBeep().then(onComplete);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+      // Update animated progress to match real time
+      const fraction = left / seconds;
+      progress.setValue(fraction);
+
+      if (left <= 0 && !completedRef.current) {
+        completedRef.current = true;
+        clearInterval(interval);
+        playBeep().then(onComplete);
+      }
+    }
+
+    const interval = setInterval(tick, 250);
+
+    // When app returns from background, tick immediately recalculates from endTimeRef
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') tick();
+    });
 
     return () => {
       clearInterval(interval);
+      subscription.remove();
       deactivateKeepAwake('rest-timer');
     };
   }, []);
