@@ -14,7 +14,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { fetchWorkoutData, Exercise } from '../../../services/sheetsParser';
 import { saveSet, getLog, SetLog } from '../../../store/workoutStore';
-import RestTimer from '../../../components/RestTimer';
+import { timerStore, useTimer } from '../../../store/timerStore';
 import { COLORS, glassCard, SHADOWS, FONTS } from '../../../constants/theme';
 
 export default function ExerciseScreen() {
@@ -29,7 +29,7 @@ export default function ExerciseScreen() {
   const [completedSets, setCompletedSets] = useState<SetLog[]>([]);
   const [weights, setWeights] = useState<string[]>([]);
   const [reps, setReps] = useState<string[]>([]);
-  const [showTimer, setShowTimer] = useState(false);
+  const timer = useTimer();
 
   useEffect(() => {
     (async () => {
@@ -89,7 +89,7 @@ export default function ExerciseScreen() {
     await saveSet(blockId!, exerciseId!, set);
     setCompletedSets((prev) => [...prev, set]);
     if (index < exercise!.sets - 1) {
-      setShowTimer(true);
+      timerStore.start(exercise!.restSeconds);
     }
   }
 
@@ -99,7 +99,12 @@ export default function ExerciseScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <Stack.Screen options={{ title: exercise.name }} />
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scroll,
+          timer.isActive && { paddingBottom: 130 },
+        ]}
+      >
         {/* Exercise info header */}
         <View style={styles.infoHeader}>
           <View style={styles.infoChips}>
@@ -263,14 +268,6 @@ export default function ExerciseScreen() {
           </TouchableOpacity>
         )}
       </ScrollView>
-
-      {showTimer && (
-        <RestTimer
-          seconds={exercise.restSeconds}
-          onComplete={() => setShowTimer(false)}
-          onSkip={() => setShowTimer(false)}
-        />
-      )}
     </KeyboardAvoidingView>
   );
 }

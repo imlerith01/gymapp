@@ -11,6 +11,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, Stack } from 'expo-router';
 import { fetchWorkoutData, WorkoutBlock } from '../services/sheetsParser';
+import { useTimer } from '../store/timerStore';
 import { COLORS, TYPE_COLORS, glassCard, SHADOWS, FONTS } from '../constants/theme';
 
 export default function HomeScreen() {
@@ -18,6 +19,7 @@ export default function HomeScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const router = useRouter();
+  const timer = useTimer();
 
   async function load() {
     try {
@@ -64,7 +66,10 @@ export default function HomeScreen() {
       <FlatList
         data={blocks}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[
+          styles.list,
+          timer.isActive && { paddingBottom: 130 },
+        ]}
         ListHeaderComponent={
           <View style={styles.header}>
             <Text style={styles.heroTitle}>Trénink</Text>

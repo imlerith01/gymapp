@@ -10,6 +10,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { fetchWorkoutData, WorkoutBlock } from '../../services/sheetsParser';
+import { useTimer } from '../../store/timerStore';
 import { COLORS, TYPE_COLORS, glassCard, SHADOWS, FONTS } from '../../constants/theme';
 
 export default function WorkoutScreen() {
@@ -17,6 +18,7 @@ export default function WorkoutScreen() {
   const [block, setBlock] = useState<WorkoutBlock | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
+  const timer = useTimer();
 
   useEffect(() => {
     fetchWorkoutData()
@@ -50,7 +52,10 @@ export default function WorkoutScreen() {
       <FlatList
         data={block.exercises}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[
+          styles.list,
+          timer.isActive && { paddingBottom: 130 },
+        ]}
         ListHeaderComponent={
           <View style={styles.header}>
             <View style={[styles.headerBadge, { backgroundColor: typeInfo.glow, borderColor: typeInfo.color }]}>
