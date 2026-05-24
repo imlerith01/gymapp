@@ -8,11 +8,12 @@ Mobilní aplikace pro sledování silového tréninku. Data se načítají z Goo
 
 Aplikace slouží jako companion pro tréninkový plán vytvořený koučem v Google Sheets. Atlet vidí:
 
-- **Bloky tréninků** (VOLUME / STRENGHT / DELOAD) seřazené od nejnovějšího
+- **Bloky tréninků** (VOLUME / STRENGHT / DELOAD) seřazené od nejnovějšího, s ukazatelem postupu (X/Y cviků hotovo)
 - **Detaily cviků** — sets, reps, váha, tempo, RPE, koučovy poznámky
 - **Předvyplněné váhy** z minulých sérií zaznamenaných v tabulce
 - **Poznámky atleta** z tabulky (zpětná vazba)
-- **Rest timer** s odpočtem mezi sériemi
+- **Logování sérií** s možností zpětné úpravy už dokončené série
+- **Plovoucí rest timer** s push notifikací — během odpočtu lze volně procházet aplikací; widget jde rozkliknout na fullscreen view
 
 ---
 
@@ -26,6 +27,7 @@ Aplikace slouží jako companion pro tréninkový plán vytvořený koučem v Go
 | Data          | Google Sheets → CSV → PapaParse      |
 | Úložiště      | AsyncStorage                         |
 | Zvuk          | expo-av                              |
+| Notifikace    | expo-notifications                   |
 | UI efekty     | expo-linear-gradient, expo-blur      |
 | Keep awake    | expo-keep-awake                      |
 
@@ -36,23 +38,25 @@ Aplikace slouží jako companion pro tréninkový plán vytvořený koučem v Go
 ```
 gymapp/
 ├── app/                          # Expo Router – file-based routing
-│   ├── _layout.tsx               # Root layout (Stack navigator, dark theme)
+│   ├── _layout.tsx               # Root layout (Stack + globální FloatingTimer)
 │   ├── index.tsx                 # Hlavní obrazovka – seznam bloků
 │   ├── workout/
-│   │   └── [blockId].tsx         # Detail bloku – seznam cviků
+│   │   └── [blockId].tsx         # Detail bloku – seznam cviků s progressem
 │   └── exercise/
 │       └── [blockId]/
-│           └── [exerciseId].tsx  # Detail cviku – logování sérií
+│           └── [exerciseId].tsx  # Detail cviku – logování + editace sérií
 ├── components/
-│   └── RestTimer.tsx             # Fullscreen modal odpočtu s animací
+│   ├── FloatingTimer.tsx         # Plovoucí widget odpočtu (bar + fullscreen)
+│   └── Skeleton.tsx              # Loading skeletony pro karty
 ├── services/
 │   └── sheetsParser.ts           # Fetch + parse CSV z Google Sheets
 ├── store/
-│   └── workoutStore.ts           # AsyncStorage CRUD pro logy sérií
+│   ├── workoutStore.ts           # AsyncStorage CRUD pro logy sérií
+│   └── timerStore.ts             # Globální stav rest timeru + notifikace
 ├── constants/
 │   └── theme.ts                  # Design tokens (barvy, glass styly, fonty)
 ├── assets/
-│   ├── beep.mp3                  # Zvuk konce odpočtu
+│   ├── beep.mp3                  # Zvuk konce odpočtu (notifikace i in-app)
 │   └── ...                       # Ikony, splash screen
 └── start-web.js                  # Launcher pro web preview
 ```
@@ -64,22 +68,23 @@ Google Sheets (CSV)
        │
        ▼
 sheetsParser.ts ── fetchWorkoutData() ──▶ WorkoutBlock[]
-       │                                      │
-       │                                      ▼
-       │                              app/index.tsx (seznam bloků)
-       │                                      │
-       │                                      ▼
-       │                         app/workout/[blockId].tsx (cviky)
-       │                                      │
-       │                                      ▼
-       │                    app/exercise/[blockId]/[exerciseId].tsx
-       │                         │                    │
-       │                         ▼                    ▼
-       │                   RestTimer.tsx        workoutStore.ts
-       │                   (odpočet)            (uložení série)
-       ▼
-  AsyncStorage
-  (workout_log_{blockId}_{YYYY-MM-DD})
+                                              │
+                                              ▼
+                                      app/index.tsx (seznam bloků)
+                                              │
+                                              ▼
+                                 app/workout/[blockId].tsx (cviky + progress)
+                                              │
+                                              ▼
+                            app/exercise/[blockId]/[exerciseId].tsx
+                                 │                          │
+                                 ▼                          ▼
+                          timerStore.start()        workoutStore
+                                 │                  (saveSet / updateSet)
+                                 ▼                          │
+                       FloatingTimer + OS notification      ▼
+                       (mountován v _layout.tsx)       AsyncStorage
+                                                   (workout_log_{blockId}_{YYYY-MM-DD})
 ```
 
 ---
@@ -92,6 +97,8 @@ sheetsParser.ts ── fetchWorkoutData() ──▶ WorkoutBlock[]
 |---------|-------------------------------------------------------------|
 | 0–8     | Osobní údaje (přeskočeny)                                   |
 | 9+      | Bloky tréninků oddělené řádky `VOLUME` / `STRENGHT` / `DELOAD` / `-` |
+
+Klíčové slovo oddělovače (`VOLUME` atd.) se hledá ve **sloupci A nebo B** — kouč může vyplňovat kterýkoli z nich, parser zvládne obě varianty.
 
 **Sloupce cviku (offset +1):**
 
@@ -182,7 +189,18 @@ Klíč: `workout_log_{blockId}_{YYYY-MM-DD}`
 }
 ```
 
-Funkce: `saveSet()`, `getLog()`, `clearLog()`
+Funkce: `saveSet()`, `updateSet()`, `getLog()`, `clearLog()`
+
+---
+
+## Rest timer – architektura
+
+Timer žije v globálním `timerStore` (singleton třída se subscribe vzorem). `FloatingTimer` je mountován jednou v `_layout.tsx`, takže přežívá navigaci mezi obrazovkami.
+
+- **Spuštění** (`timerStore.start(seconds, label?)`): nastaví `endTime`, naplánuje OS push notifikaci přes `expo-notifications` (Android channel `rest-timer` s MAX prioritou + vlastním zvukem `beep.mp3`).
+- **Skip** (`timerStore.skip()`): zruší naplánovanou notifikaci.
+- **Natural completion** (`timerStore.complete()`): notifikace **se neruší** — OS ji odpálí ve stejný moment, kdy JS detekuje nulu (jinak by uživatel v pozadí dostal ticho).
+- **Expanded view**: tap na plovoucí pruh otevře fullscreen Modal s rotující animací.
 
 ---
 
