@@ -33,6 +33,22 @@ export async function saveSet(
   await AsyncStorage.setItem(key, JSON.stringify(log));
 }
 
+export async function updateSet(
+  blockId: string,
+  exerciseId: string,
+  index: number,
+  set: SetLog
+): Promise<void> {
+  const key = getKey(blockId);
+  const raw = await AsyncStorage.getItem(key);
+  const log: Record<string, ExerciseLog> = raw ? JSON.parse(raw) : {};
+
+  if (!log[exerciseId] || !log[exerciseId].sets[index]) return;
+  log[exerciseId].sets[index] = set;
+
+  await AsyncStorage.setItem(key, JSON.stringify(log));
+}
+
 export async function getLog(
   blockId: string
 ): Promise<Record<string, ExerciseLog>> {

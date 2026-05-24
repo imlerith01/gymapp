@@ -34,23 +34,30 @@ export type Exercise = {
 const BLOCK_KEYWORDS = ['VOLUME', 'STRENGHT', 'DELOAD'] as const;
 type BlockType = (typeof BLOCK_KEYWORDS)[number];
 
+function cellsToCheck(row: string[]): string[] {
+  // Spreadsheet may place keywords in column A (0) or column B (1)
+  return [0, 1].map((i) => (row[i] || '').trim().toUpperCase());
+}
+
 function detectBlockType(row: string[]): BlockType | null {
-  const cell = (row[1] || '').trim().toUpperCase();
-  for (const keyword of BLOCK_KEYWORDS) {
-    if (cell === keyword) return keyword;
+  for (const cell of cellsToCheck(row)) {
+    for (const keyword of BLOCK_KEYWORDS) {
+      if (cell === keyword) return keyword;
+    }
   }
   return null;
 }
 
 function isBlockSeparator(row: string[]): boolean {
-  const cell = (row[1] || '').trim().toUpperCase();
-  if (BLOCK_KEYWORDS.some((k) => cell === k)) return true;
-  if (cell === '-') return true;
+  for (const cell of cellsToCheck(row)) {
+    if (BLOCK_KEYWORDS.some((k) => cell === k)) return true;
+    if (cell === '-') return true;
+  }
   return false;
 }
 
 function isColumnHeader(row: string[]): boolean {
-  return (row[1] || '').trim().toUpperCase() === 'MOVEMENT';
+  return cellsToCheck(row).some((c) => c === 'MOVEMENT');
 }
 
 function parseRestTime(value: string): number {

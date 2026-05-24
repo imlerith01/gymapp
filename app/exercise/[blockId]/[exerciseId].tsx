@@ -13,8 +13,8 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import { fetchWorkoutData, Exercise } from '../../../services/sheetsParser';
-import { saveSet, getLog, SetLog } from '../../../store/workoutStore';
-import RestTimer from '../../../components/RestTimer';
+import { saveSet, updateSet, getLog, SetLog } from '../../../store/workoutStore';
+import { timerStore, useTimer } from '../../../store/timerStore';
 import { COLORS, glassCard, SHADOWS, FONTS } from '../../../constants/theme';
 
 export default function ExerciseScreen() {
@@ -29,7 +29,10 @@ export default function ExerciseScreen() {
   const [completedSets, setCompletedSets] = useState<SetLog[]>([]);
   const [weights, setWeights] = useState<string[]>([]);
   const [reps, setReps] = useState<string[]>([]);
-  const [showTimer, setShowTimer] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editWeight, setEditWeight] = useState('');
+  const [editReps, setEditReps] = useState('');
+  const timer = useTimer();
 
   useEffect(() => {
     (async () => {
@@ -40,7 +43,6 @@ export default function ExerciseScreen() {
         if (ex) {
           setExercise(ex);
 
-          // Pre-fill weights from CSV set data, falling back to the general weight column
           const initialWeights = Array.from({ length: ex.sets }, (_, i) => {
             const csvSetWeight = ex.setData[i]?.weight;
             if (csvSetWeight) return csvSetWeight;
@@ -49,7 +51,6 @@ export default function ExerciseScreen() {
           });
           setWeights(initialWeights);
 
-          // Pre-fill reps from CSV set data, falling back to the general reps column
           const initialReps = Array.from({ length: ex.sets }, (_, i) => {
             const csvSetReps = ex.setData[i]?.reps;
             if (csvSetReps) return csvSetReps;
@@ -79,19 +80,63 @@ export default function ExerciseScreen() {
 
   const currentSetIndex = completedSets.length;
   const allDone = currentSetIndex >= exercise.sets;
+  const isEditing = editingIndex !== null;
 
-  async function handleCompleteSet(index: number) {
+  async function handleCompleteSet() {
     const set: SetLog = {
-      weight: weights[index],
-      reps: reps[index],
+      weight: weights[currentSetIndex],
+      reps: reps[currentSetIndex],
       completedAt: new Date().toISOString(),
     };
     await saveSet(blockId!, exerciseId!, set);
     setCompletedSets((prev) => [...prev, set]);
-    if (index < exercise!.sets - 1) {
-      setShowTimer(true);
+
+    if (currentSetIndex < exercise!.sets - 1) {
+      const nextSetNum = currentSetIndex + 2;
+      timerStore.start(
+        exercise!.restSeconds,
+        `${exercise!.name} · série ${nextSetNum}/${exercise!.sets}`
+      );
     }
   }
+
+  function startEdit(index: number) {
+    setEditingIndex(index);
+    setEditWeight(completedSets[index].weight);
+    setEditReps(completedSets[index].reps);
+  }
+
+  function cancelEdit() {
+    setEditingIndex(null);
+  }
+
+  async function saveEdit() {
+    if (editingIndex === null) return;
+    const updated: SetLog = {
+      ...completedSets[editingIndex],
+      weight: editWeight,
+      reps: editReps,
+    };
+    await updateSet(blockId!, exerciseId!, editingIndex, updated);
+    setCompletedSets((prev) => {
+      const next = [...prev];
+      next[editingIndex] = updated;
+      return next;
+    });
+    setEditingIndex(null);
+  }
+
+  function handleStickyPress() {
+    if (isEditing) saveEdit();
+    else if (allDone) router.back();
+    else handleCompleteSet();
+  }
+
+  const stickyLabel = isEditing
+    ? 'Uložit změny'
+    : allDone
+    ? 'Cvik dokončen'
+    : `Hotovo · Série ${currentSetIndex + 1}`;
 
   return (
     <KeyboardAvoidingView
@@ -99,7 +144,13 @@ export default function ExerciseScreen() {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <Stack.Screen options={{ title: exercise.name }} />
-      <ScrollView contentContainerStyle={styles.scroll}>
+      <ScrollView
+        contentContainerStyle={[
+          styles.scroll,
+          { paddingBottom: 100 + (timer.isActive ? 110 : 0) },
+        ]}
+        keyboardShouldPersistTaps="handled"
+      >
         {/* Exercise info header */}
         <View style={styles.infoHeader}>
           <View style={styles.infoChips}>
@@ -158,7 +209,20 @@ export default function ExerciseScreen() {
         {/* Sets */}
         {Array.from({ length: exercise.sets }).map((_, i) => {
           const isCompleted = i < completedSets.length;
-          const isCurrent = i === currentSetIndex;
+          const isThisEditing = editingIndex === i;
+          const isCurrent = i === currentSetIndex && !isEditing;
+          const showInputsActive = isThisEditing || (isCurrent && !isCompleted);
+
+          const displayWeight = isThisEditing
+            ? editWeight
+            : isCompleted
+            ? completedSets[i].weight
+            : weights[i];
+          const displayReps = isThisEditing
+            ? editReps
+            : isCompleted
+            ? completedSets[i].reps
+            : reps[i];
 
           return (
             <View
@@ -166,13 +230,18 @@ export default function ExerciseScreen() {
               style={[
                 styles.setCard,
                 SHADOWS.soft,
-                isCompleted && styles.setCardCompleted,
+                isCompleted && !isThisEditing && styles.setCardCompleted,
                 isCurrent && styles.setCardCurrent,
+                isThisEditing && styles.setCardEditing,
               ]}
             >
               <LinearGradient
                 colors={[
-                  isCurrent ? COLORS.accentSoft : 'rgba(255,255,255,0.02)',
+                  isThisEditing
+                    ? 'rgba(59, 130, 246, 0.10)'
+                    : isCurrent
+                    ? COLORS.accentSoft
+                    : 'rgba(255,255,255,0.02)',
                   'transparent',
                 ]}
                 start={{ x: 0, y: 0 }}
@@ -181,23 +250,58 @@ export default function ExerciseScreen() {
               >
                 <View style={styles.setHeader}>
                   <View style={styles.setNumberBadge}>
-                    <Text style={[styles.setNumberText, isCompleted && { color: COLORS.success }]}>
-                      {isCompleted ? '✓' : i + 1}
+                    <Text
+                      style={[
+                        styles.setNumberText,
+                        isCompleted && !isThisEditing && { color: COLORS.success },
+                        isThisEditing && { color: COLORS.volume },
+                      ]}
+                    >
+                      {isCompleted && !isThisEditing ? '✓' : i + 1}
                     </Text>
                   </View>
                   <Text style={styles.setLabel}>
-                    {isCompleted ? 'Hotovo' : isCurrent ? 'Aktuální série' : `Série ${i + 1}`}
+                    {isThisEditing
+                      ? 'Úprava'
+                      : isCompleted
+                      ? 'Hotovo'
+                      : isCurrent
+                      ? 'Aktuální série'
+                      : `Série ${i + 1}`}
                   </Text>
+                  {isCompleted && !isThisEditing ? (
+                    <TouchableOpacity
+                      onPress={() => startEdit(i)}
+                      style={styles.editLink}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.editLinkText}>Upravit</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  {isThisEditing ? (
+                    <TouchableOpacity
+                      onPress={cancelEdit}
+                      style={styles.editLink}
+                      hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                    >
+                      <Text style={styles.cancelLinkText}>Zrušit</Text>
+                    </TouchableOpacity>
+                  ) : null}
                 </View>
 
                 <View style={styles.inputRow}>
                   <View style={styles.inputGroup}>
                     <Text style={styles.inputLabel}>KG</Text>
                     <TextInput
-                      style={[styles.input, isCompleted && styles.inputCompleted]}
-                      value={isCompleted ? completedSets[i].weight : weights[i]}
+                      style={[
+                        styles.input,
+                        isCompleted && !isThisEditing && styles.inputCompleted,
+                      ]}
+                      value={displayWeight}
                       onChangeText={(v) => {
-                        if (!isCompleted) {
+                        if (isThisEditing) {
+                          setEditWeight(v);
+                        } else if (showInputsActive) {
                           setWeights((prev) => {
                             const next = [...prev];
                             next[i] = v;
@@ -206,7 +310,7 @@ export default function ExerciseScreen() {
                         }
                       }}
                       keyboardType="numeric"
-                      editable={!isCompleted}
+                      editable={showInputsActive}
                       placeholderTextColor={COLORS.textTertiary}
                       placeholder="0"
                     />
@@ -215,10 +319,15 @@ export default function ExerciseScreen() {
                   <View style={styles.inputGroup}>
                     <Text style={styles.inputLabel}>REPS</Text>
                     <TextInput
-                      style={[styles.input, isCompleted && styles.inputCompleted]}
-                      value={isCompleted ? completedSets[i].reps : reps[i]}
+                      style={[
+                        styles.input,
+                        isCompleted && !isThisEditing && styles.inputCompleted,
+                      ]}
+                      value={displayReps}
                       onChangeText={(v) => {
-                        if (!isCompleted) {
+                        if (isThisEditing) {
+                          setEditReps(v);
+                        } else if (showInputsActive) {
                           setReps((prev) => {
                             const next = [...prev];
                             next[i] = v;
@@ -226,51 +335,52 @@ export default function ExerciseScreen() {
                           });
                         }
                       }}
-                      keyboardType="default"
-                      editable={!isCompleted}
+                      keyboardType="numeric"
+                      editable={showInputsActive}
                       placeholderTextColor={COLORS.textTertiary}
                       placeholder="0"
                     />
                   </View>
                 </View>
-
-                {isCurrent && !isCompleted && (
-                  <TouchableOpacity
-                    style={[styles.completeButton, SHADOWS.glow]}
-                    onPress={() => handleCompleteSet(i)}
-                  >
-                    <Text style={styles.completeButtonText}>Hotovo</Text>
-                  </TouchableOpacity>
-                )}
               </LinearGradient>
             </View>
           );
         })}
+      </ScrollView>
 
-        {allDone && (
-          <TouchableOpacity
-            style={styles.doneButton}
-            onPress={() => router.back()}
-          >
+      {/* Sticky bottom action button */}
+      <View
+        style={[
+          styles.stickyContainer,
+          { bottom: timer.isActive ? 110 : 0 },
+        ]}
+        pointerEvents="box-none"
+      >
+        <TouchableOpacity
+          style={[styles.stickyButton, !isEditing && !allDone && SHADOWS.glow]}
+          onPress={handleStickyPress}
+          activeOpacity={0.85}
+        >
+          {isEditing ? (
+            <View style={[styles.stickyInner, { backgroundColor: COLORS.volume }]}>
+              <Text style={[styles.stickyText, { color: '#fff' }]}>{stickyLabel}</Text>
+            </View>
+          ) : allDone ? (
             <LinearGradient
               colors={['#22C55E', '#16A34A']}
               start={{ x: 0, y: 0 }}
               end={{ x: 1, y: 0 }}
-              style={styles.doneGradient}
+              style={styles.stickyInner}
             >
-              <Text style={styles.doneButtonText}>Cvik dokončen</Text>
+              <Text style={styles.stickyText}>{stickyLabel}</Text>
             </LinearGradient>
-          </TouchableOpacity>
-        )}
-      </ScrollView>
-
-      {showTimer && (
-        <RestTimer
-          seconds={exercise.restSeconds}
-          onComplete={() => setShowTimer(false)}
-          onSkip={() => setShowTimer(false)}
-        />
-      )}
+          ) : (
+            <View style={[styles.stickyInner, { backgroundColor: COLORS.accent }]}>
+              <Text style={styles.stickyText}>{stickyLabel}</Text>
+            </View>
+          )}
+        </TouchableOpacity>
+      </View>
     </KeyboardAvoidingView>
   );
 }
@@ -288,7 +398,6 @@ const styles = StyleSheet.create({
   },
   scroll: {
     padding: 16,
-    paddingBottom: 50,
   },
   infoHeader: {
     marginBottom: 16,
@@ -370,10 +479,13 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   setCardCompleted: {
-    opacity: 0.5,
+    opacity: 0.55,
   },
   setCardCurrent: {
     borderColor: 'rgba(232, 168, 56, 0.3)',
+  },
+  setCardEditing: {
+    borderColor: 'rgba(59, 130, 246, 0.5)',
   },
   setCardInner: {
     padding: 16,
@@ -404,6 +516,25 @@ const styles = StyleSheet.create({
     color: COLORS.textSecondary,
     fontSize: 14,
     fontWeight: '500',
+    flex: 1,
+  },
+  editLink: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10,
+    backgroundColor: COLORS.glass,
+    borderWidth: 1,
+    borderColor: COLORS.glassBorder,
+  },
+  editLinkText: {
+    color: COLORS.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  cancelLinkText: {
+    color: COLORS.volume,
+    fontSize: 12,
+    fontWeight: '700',
   },
   inputRow: {
     flexDirection: 'row',
@@ -441,32 +572,28 @@ const styles = StyleSheet.create({
     fontWeight: '300',
     marginTop: 20,
   },
-  completeButton: {
-    backgroundColor: COLORS.accent,
-    borderRadius: 14,
-    paddingVertical: 16,
-    alignItems: 'center',
-    marginTop: 16,
+  stickyContainer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    padding: 16,
+    paddingBottom: Platform.OS === 'ios' ? 30 : 16,
+    backgroundColor: 'rgba(10, 10, 15, 0.92)',
+    borderTopWidth: 1,
+    borderTopColor: COLORS.glassBorder,
   },
-  completeButtonText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '800',
-    letterSpacing: 0.3,
-  },
-  doneButton: {
-    marginTop: 10,
-    borderRadius: 14,
+  stickyButton: {
+    borderRadius: 16,
     overflow: 'hidden',
   },
-  doneGradient: {
-    paddingVertical: 18,
+  stickyInner: {
+    paddingVertical: 16,
     alignItems: 'center',
-    borderRadius: 14,
+    borderRadius: 16,
   },
-  doneButtonText: {
+  stickyText: {
     color: '#000',
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '800',
     letterSpacing: 0.3,
   },
