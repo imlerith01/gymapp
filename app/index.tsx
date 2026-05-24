@@ -4,14 +4,15 @@ import {
   Text,
   FlatList,
   TouchableOpacity,
-  ActivityIndicator,
   StyleSheet,
   RefreshControl,
+  ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter, Stack } from 'expo-router';
 import { fetchWorkoutData, WorkoutBlock } from '../services/sheetsParser';
 import { useTimer } from '../store/timerStore';
+import { WorkoutCardSkeleton } from '../components/Skeleton';
 import { COLORS, TYPE_COLORS, glassCard, SHADOWS, FONTS } from '../constants/theme';
 
 export default function HomeScreen() {
@@ -42,10 +43,17 @@ export default function HomeScreen() {
 
   if (loading) {
     return (
-      <View style={styles.center}>
+      <View style={styles.container}>
         <Stack.Screen options={{ title: '' }} />
-        <ActivityIndicator size="large" color={COLORS.accent} />
-        <Text style={styles.loadingText}>Načítání tréninku...</Text>
+        <ScrollView contentContainerStyle={styles.list}>
+          <View style={styles.header}>
+            <Text style={styles.heroTitle}>Trénink</Text>
+            <Text style={styles.heroSubtitle}>Načítání...</Text>
+          </View>
+          <WorkoutCardSkeleton />
+          <WorkoutCardSkeleton />
+          <WorkoutCardSkeleton />
+        </ScrollView>
       </View>
     );
   }

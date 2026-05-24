@@ -6,6 +6,7 @@ type State = {
   isActive: boolean;
   endTime: number;
   totalSeconds: number;
+  label: string;
 };
 
 Notifications.setNotificationHandler({
@@ -42,7 +43,7 @@ async function ensureNotificationPermissions(): Promise<boolean> {
 }
 
 class TimerStore {
-  private state: State = { isActive: false, endTime: 0, totalSeconds: 0 };
+  private state: State = { isActive: false, endTime: 0, totalSeconds: 0, label: '' };
   private listeners = new Set<() => void>();
   private notificationId: string | null = null;
 
@@ -61,7 +62,7 @@ class TimerStore {
     this.listeners.forEach((l) => l());
   }
 
-  async start(seconds: number) {
+  async start(seconds: number, label = '') {
     if (this.notificationId) {
       try {
         await Notifications.cancelScheduledNotificationAsync(this.notificationId);
@@ -73,6 +74,7 @@ class TimerStore {
       isActive: true,
       endTime: Date.now() + seconds * 1000,
       totalSeconds: seconds,
+      label,
     };
     this.emit();
 
@@ -105,7 +107,7 @@ class TimerStore {
       } catch {}
       this.notificationId = null;
     }
-    this.state = { isActive: false, endTime: 0, totalSeconds: 0 };
+    this.state = { isActive: false, endTime: 0, totalSeconds: 0, label: '' };
     this.emit();
   }
 
@@ -114,7 +116,7 @@ class TimerStore {
   // otherwise the user gets no sound when the app is backgrounded.
   complete() {
     this.notificationId = null;
-    this.state = { isActive: false, endTime: 0, totalSeconds: 0 };
+    this.state = { isActive: false, endTime: 0, totalSeconds: 0, label: '' };
     this.emit();
   }
 }
